@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Three.js RenderTarget with Combined Scene</title>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        background-color: #222;
+        font-family: "Inter", sans-serif;
+        color: white;
+      }
+      canvas {
+        display: block;
+        border-radius: 8px;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+      }
+    </style>
+  </head>
+  <body>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.172.0/three.module.min.js"
+        }
+      }
+    </script>
+
+    <script type="module">
+      import * as THREE from "three";
+
+      //   import ShapePointsMesh from "../lib/meshes/ShapePointsMesh.js";
+
+      let renderer, mainScene, mainCamera;
+      let renderTargetScene, renderTargetCamera, renderTarget;
+      let cube, largePoint;
+      let screenQuad;
+
+      let wrt, cameraPick;
+
+      function init() {
+        // 1. Setup Renderer
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.body.appendChild(renderer.domElement);
+
+        // 2. Setup Main Scene and Camera
+        mainScene = new THREE.Scene();
+        mainCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+        mainCamera.position.z = 1;
+
+        // 3. Setup RenderTarget Scene and Camera (for rendering the point and cube)
+        renderTargetScene = new THREE.Scene();
+        renderTargetCamera = new THREE.PerspectiveCamera(
+          75,
+          window.innerWidth / window.innerHeight,
+          0.1,
+          1000
+        );
+        renderTargetCamera.position.z = 3;
+
+        cameraPick = new THREE.PerspectiveCamera(
+          75,
+          window.innerWidth / window.innerHeight,
+          0.1,
+          1000
+        );
+        cameraPick.position.z = 3;
+
+        // 4. Create WebGLRenderTarget
+        renderTarget = new THREE.WebGLRenderTarget(
+          window.innerWidth * window.devicePixelRatio,
+          window.innerHeight * window.devicePixelRatio,
+          {
+            minFilter: THREE.LinearFilter,
+            magFilter: THREE.LinearFilter,
+            format: THREE.RGBAFormat,
+            internalFormat: THREE.RGBA8,
+            type: THREE.UnsignedByteType,
+            // encoding: renderer.outputEncoding,
+            // depthBuffer: true,
+          }
+        );
+
+        wrt = new THREE.WebGLRenderTarget(1, 1, {
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          format: THREE.RGBAFormat,
+          internalFormat: THREE.RGBA8,
+          type: THREE.UnsignedByteType,
+          // encoding: renderer.outputEncoding,
+          // depthBuffer: true,
+        });
+
+        // 5. Create the Large Point Mesh (rendered to renderTargetScene)
+        const pointGeometry = new THREE.BufferGeometry();
+        const positions = new Float32Array([0, 0, 0, 1, -1, 0]);
+        pointGeometry.setAttribute(
+          "position",
+          new THREE.BufferAttribute(positions, 3)
+        );
+
+        const pointMaterial = new THREE.PointsMaterial({
+          color: 0x0000ff, // Blue color
+          size: 150,
+          sizeAttenuation: false,
+        });
+        largePoint = new THREE.Points(pointGeometry, pointMaterial);
+        renderTargetScene.add(largePoint);
+
+        // 6. Create the Cube (rendered to renderTargetScene)
+        const cubeGeometry = new THREE.BoxGeometry(1, 1, 1);
+        const cubeMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 }); // Red cube
+        cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+        cube.position.x = -1.5;
+        cube.position.y = -0.5;
+        renderTargetScene.add(cube);
+
+        // 7. Create a Full-Screen Quad to display the RenderTarget's texture (rendered to mainScene)
+        const quadGeometry = new THREE.PlaneGeometry(2, 2);
+        const quadMaterial = new THREE.MeshBasicMaterial({
+          map: renderTarget.texture,
+        });
+        screenQuad = new THREE.Mesh(quadGeometry, quadMaterial);
+        mainScene.add(screenQuad);
+
+        // Add click event listener to the canvas
+        renderer.domElement.addEventListener("click", onCanvasClick, false);
+
+        // Handle window resizing
+        window.addEventListener("resize", onWindowResize, false);
+
+        // Start the animation loop
+        animate();
+      }
+
+      /**
+       * Handles click events on the canvas to read pixel color.
+       * @param {MouseEvent} event The click event object.
+       */
+      function onCanvasClick(event) {
+        // Get mouse coordinates relative to the canvas
+        const mouseX = event.clientX;
+        const mouseY = event.clientY;
+
+        // Convert mouse coordinates to pixel coordinates for readRenderTargetPixels
+        // readRenderTargetPixels expects coordinates from the bottom-left.
+        // event.clientY is from top-left, so we need to invert Y.
+        const dpr = window.devicePixelRatio;
+        const pixelX = mouseX * dpr;
+        // const pixelY = (window.innerHeight - mouseY) * dpr;
+        const pixelY = mouseY * dpr;
+
+        const canvas = renderer.domElement;
+        cameraPick.setViewOffset(
+          canvas.width, // fullWidth
+          canvas.height, // fullHeight
+          Math.floor(pixelX), // X
+          Math.floor(pixelY), // Y
+          1, // Width
+          1 // Height
+        );
+
+        // Create a 1x1 pixel buffer to store the result (RGBA)
+        const pixelBuffer = new Uint8Array(4);
+
+        // Save the current render target so we can restore it later
+        const currentRenderTarget = renderer.getRenderTarget();
+
+        // Perform the first render pass to ensure the renderTarget has the latest content
+        renderer.setRenderTarget(wrt);
+        renderer.clear();
+        renderer.render(renderTargetScene, cameraPick);
+
+        // Read the pixel from the render target
+        try {
+          // readRenderTargetPixels(renderTarget, x, y, width, height, buffer)
+          renderer.readRenderTargetPixels(wrt, 0, 0, 1, 1, pixelBuffer);
+
+          console.log(pixelBuffer);
+        } catch (e) {
+          console.error("Error reading render target pixels:", e);
+        } finally {
+          // Restore the original render target (null for the screen)
+          renderer.setRenderTarget(currentRenderTarget);
+        }
+      }
+
+      function onWindowResize() {
+        mainCamera.aspect = window.innerWidth / window.innerHeight;
+        mainCamera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+
+        renderTargetCamera.aspect = window.innerWidth / window.innerHeight;
+        renderTargetCamera.updateProjectionMatrix();
+
+        cameraPick.aspect = window.innerWidth / window.innerHeight;
+        cameraPick.updateProjectionMatrix();
+
+        renderTarget.setSize(
+          window.innerWidth * window.devicePixelRatio,
+          window.innerHeight * window.devicePixelRatio
+        );
+      }
+
+      function animate() {
+        requestAnimationFrame(animate);
+
+        // cube.rotation.x += 0.01;
+        // cube.rotation.y += 0.01;
+        // largePoint.rotation.y += 0.008;
+
+        // // --- Render Pass 1: Render the point and cube to the WebGLRenderTarget ---
+        // renderer.setRenderTarget(renderTarget);
+        // renderer.clear();
+        // renderer.render(renderTargetScene, renderTargetCamera);
+
+        // // --- Render Pass 2: Render the main scene (which displays the render target's texture) to the screen ---
+        // renderer.setRenderTarget(null);
+        // renderer.clear();
+        // renderer.render(mainScene, mainCamera);
+
+        renderer.render(renderTargetScene, renderTargetCamera);
+      }
+
+      window.onload = init;
+    </script>
+  </body>
+</html>
