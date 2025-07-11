@@ -1,0 +1,303 @@
+<!DOCTYPE html><html lang="en"><head><title></title></head>
+<style>canvas{ display:block; } body, html { padding:0px; margin:0px; width:100%; height:100%; }</style>
+<body><script src="../import-map.js"></script><script type="module">
+// #region IMPORTS
+import useThreeWebGL2, { THREE, useDarkScene, useVisualDebug } 
+                                from '@lib/useThreeWebGL2.js';
+import useTransformControl      from '@lib/useTransformControl.js';
+import ShapePointsMesh          from '@lib/meshes/ShapePointsMesh.js';
+import ScreenPicker, { Tasker } from '@lib/misc/ScreenPicker.js';
+import * as Util                from '@lib/util.js';
+
+import { GLTFLoader }           from 'three/GLTFLoader.js';
+
+import { Armature, Vec3 }       from './ossos/ossos.min.js';
+import { IKPoseRig }            from './ossos/IKPoseRig.js';
+
+import { Pane }                 from '@tp/tweakpane/tweakpane-4.0.4.min.js';
+import * as TweakpaneEssentials from '@tp/tweakpane/tweakpane-plugin-essentials-0.2.1.min.js';
+// #endregion
+
+// #region MAIN
+let App   = useDarkScene( useThreeWebGL2() );
+let Debug = {};
+let Ref   = {
+    gizmo   : useTransformControl( App ).useAxes().hide(),
+    picker  : new ScreenPicker( App ),
+    pnt     : new ShapePointsMesh().forDebugging( ),
+    tasks   : new Tasker(),
+
+    selPnt  : -1,
+    twistA  : 0,
+    twistB  : 0,
+
+    Green : 'IK Target Position',
+    Yellow : 'IK Pole Position',
+    L_click: "Select point & show gizmo",
+    R_click: "Hides gizmo",
+};
+
+window.addEventListener( 'load', async ()=>{
+	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // INIT / SETUP
+	App.sphericalLook( 0, 20, 4, [0,0.8,0] );
+    globalThis.Debug = Debug = await useVisualDebug( App );
+    App.scene.add( Ref.pnt );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // #region LOAD CHARACTGER
+    const tf = await new GLTFLoader().loadAsync( './res/axel/axel.gltf' );
+
+    // Get character from loaded scene
+    const mesh = Util.firstFind( tf.scene );
+    
+    // Fix material settings & Remove vertex colors since its messing up PBR
+    mesh.material.metalness         = 0.9;
+    mesh.material.roughness         = 0.5;
+    mesh.material.aoMapIntensity    = 1.0;
+    mesh.material.vertexColors      = false;
+    delete mesh.geometry.attributes.color;
+    delete mesh.geometry.attributes.color_1;
+
+    App.scene.add( mesh, mesh.skeleton.bones[0] );  // Render Skinned Mesh
+
+    Ref.skel = mesh.skeleton;
+    // Make skeleton viewable
+    // const skel = new THREE.SkeletonHelper( mesh.skeleton.bones[0] );
+    // App.scene.add( skel );
+    // #endregion
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // #region OSSOS IK RIG
+    Ref.arm = skeletonToArmature( mesh.skeleton );
+    Ref.rig = new IKPoseRig( Ref.arm.bindPose.clone(), true );
+
+    initIKUI( Ref.rig );
+
+    debugPose( Ref.arm.bindPose );
+    // #endregion
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.createRenderLoop( null, onPostRender ).start();
+    buildUI();
+});
+
+function onPostRender( dt, et ){ Ref.tasks.run(); }
+
+function ikUpdate(){
+    Debug.reset();
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Set twist 
+    const rig     = Ref.rig;
+    const tar     = rig.spine.target;
+    tar.twistRadA = Ref.twistA * Math.PI / 180;
+    tar.twistRadB = Ref.twistB * Math.PI / 180;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Run solver & generate pose
+    rig.runSolvers();
+
+    // Apply pose to 3JS Skeleton
+    applyPoseToSkeleton( rig.wpose, Ref.skel );
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Visual Debugging
+
+    // View OSSOS Pose
+    debugPose( rig.wpose, [-2,0,0] );
+    
+    // View Curve Samples
+    const samp = rig.spineData[0];
+    Debug.pnt.add( samp.items[0].pos, 0xFA8072, 1 );
+    for( let i=0; i < samp.items.length-1; i++ ){
+        Debug.ln.add( samp.items[i].pos, samp.items[i+1].pos, 0xFA8072 );
+    }
+
+    // Show target points based on curves
+    const steps = rig.spineData[1];
+    for( const i of steps ){
+        Debug.pnt.add( i.pos, 0xFFA000, 0.5 );
+    }
+
+    // Show difference between tpose & working pose
+    // for( const lnk of rig.spine.chain.links ){
+    //     Debug.pnt.add( rig.wpose.bones[ lnk.index ].world.pos, 0xff0000, 0.5 );
+    //     Debug.pnt.add( rig.tpose.bones[ lnk.index ].world.pos, 0xff0000, 1, 7  );
+    // }
+}
+
+async function buildUI(){
+    appendGithubLink( false );
+
+    const container = document.createElement( 'div' );
+    container.className         = 'ppane';
+    document.body.appendChild( container );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const p = new Pane( {container} );
+    p.on( 'change', e=>ikUpdate() );
+
+    const f = p.addFolder({ title: 'Spine Twisting', expanded: true });
+    f.addBinding( Ref, 'twistA', { min: -180, max: 180, step: 1, label: 'Start' } );
+    f.addBinding( Ref, 'twistB', { min: -180, max: 180, step: 1, label: 'End' } );
+    f.addButton({ title: 'Reset' }).on( 'click', ()=>{
+        Ref.twistA = 0;
+        Ref.twistB = 0;
+        f.refresh();
+    });
+
+    const f2 = p.addFolder({ title: 'Info', expanded: true });
+    f2.addBinding( Ref, 'Green', { readonly: true, });
+    f2.addBinding( Ref, 'Yellow', { readonly: true, });
+    f2.addBinding( Ref, 'L_click', { readonly: true, });
+    f2.addBinding( Ref, 'R_click', { readonly: true, });
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    Ref.pane = p;
+}
+
+// #endregion
+
+// #region GIZMO
+
+Ref.gizmo.onMove = pos=>{
+    // console.log( pos );
+    if( Ref.selPnt === -1 ) return;
+    Ref.pnt.setPosAt( Ref.selPnt, pos );    
+    
+    const pi =  POSE[ Ref.selPnt ];
+    switch( pi.type ){
+        case 'target':
+            Ref.rig.setTargetPos( pi.key, pos );
+            break;
+        case 'pole':
+            Ref.rig.setPolePos( pi.key, pos );
+            break;
+    }
+
+    ikUpdate();
+};
+
+// #endregion
+
+// #region PICKING
+window.addEventListener( 'pointerdown', e=>{
+    if( e.button === 2 ){
+        Ref.gizmo.hide();
+        Ref.selPnt = -1;
+        return;
+    }
+
+    if( Ref.gizmo.o.dragging ) return;
+    Ref.tasks.push( Ref.picker.pixelTaskFromEvent( e, onPicker, false ) );
+});
+
+function onPicker( o ){
+    // console.log( 'Pick', o );
+    // if( o.id === -1 || o.type !== "shapePoint" ) return;
+    if( o.id === -1 || o.obj !== Ref.pnt ) return;
+    console.log( 'Pick', o );
+    Ref.gizmo.show( o.hit );
+    Ref.selPnt = o.idx;
+}
+// #endregion
+
+// #region OSSOS HELPERS
+function skeletonToArmature( skel ){
+    const arm = new Armature();
+
+    let b;
+    for( const sb of skel.bones ){
+        b = arm.addBone( { 
+            name    : sb.name, 
+            parent  : ( sb.parent instanceof THREE.Bone )? sb.parent.name : null,
+        } );
+
+        b.local.rot.copy( sb.quaternion.toArray() );
+        b.local.pos.copy( sb.position.toArray() );
+        b.local.scl.copy( sb.scale.toArray() );
+    }
+
+    arm.bind( 0.1 );
+    return arm;
+}
+
+function debugPose( pose, offset=[-2,0,0] ){
+    const PC = 0x707070;
+    const LC = 0x707070;
+    const v  = new Vec3();
+    const vv = new Vec3();
+    let c, ci;
+
+    for( let p of pose.bones ){
+        v.fromAdd( p.world.pos, offset );
+        Debug.pnt.add( v, PC, 1.0 );
+        for( ci of p.children ){
+            c = pose.bones[ ci ];
+            vv.fromAdd( c.world.pos, offset );
+            Debug.ln.add( v, vv, LC );
+        }
+    }
+}
+
+function applyPoseToSkeleton( pose, skel ){
+    const cnt = pose.bones.length;
+
+    let sb;
+    for( const[i, pb] of pose.bones.entries() ){
+        sb = skel.bones[ i ];
+        sb.quaternion.fromArray( pb.local.rot );
+    }
+}
+// #endregion
+
+// #region IK UI
+let POSE = [
+    { pos:[0,0,0], key:'leftArm', type:'target' },
+    { pos:[0,0,0], key:'leftArm', type:'pole' },
+
+    { pos:[0,0,0], key:'rightArm', type:'target' },
+    { pos:[0,0,0], key:'rightArm', type:'pole' },
+
+    { pos:[0,0,0], key:'leftLeg', type:'target' },
+    { pos:[0,0,0], key:'leftLeg', type:'pole' },
+
+    { pos:[0,0,0], key:'rightLeg', type:'target' },
+    { pos:[0,0,0], key:'rightLeg', type:'pole' },
+
+    { pos:[0,0,0], key:'spine', type:'target' },
+    { pos:[0,0,0], key:'spine', type:'pole' },
+]
+
+function initIKUI( rig ){
+    for( let i of POSE ){
+        switch( i.type ){
+            case 'target':
+                i.pos = rig.getTargetPos( i.key );
+                Ref.pnt.add( i.pos, 0x00ff00, 1.5, 1 );
+                break;
+            case 'pole':
+                i.pos = rig.getPolePos( i.key );
+                Ref.pnt.add( i.pos, 0xffff00, 1.7, 4 );
+                break;
+        }
+    }
+}
+// #endregion
+
+</script>
+<style>
+/* Main Panel */
+.ppane{ position: fixed; top: 10px; right: 10px; }
+.ppane .tp-rotv { width: 270px; }
+
+/* Label  */
+.ppane .tp-lblv_l{ max-width:50px; }
+
+/* Input */
+.ppane .tp-lblv_v { flex:1; flex-grow:1; }
+.ppane .tp-sldtxtv_t { max-width: 40px; }
+.ppane .tp-sglv_i{ color:white; }
+</style>
+</body></html>
