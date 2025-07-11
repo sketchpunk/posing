@@ -102,7 +102,7 @@
 
         // 5. Create the Large Point Mesh (rendered to renderTargetScene)
         const pointGeometry = new THREE.BufferGeometry();
-        const positions = new Float32Array([0, 0, 0, 1, -1, 0]);
+        const positions = new Float32Array([0, 0, 0]);
         pointGeometry.setAttribute(
           "position",
           new THREE.BufferAttribute(positions, 3)
@@ -110,7 +110,7 @@
 
         const pointMaterial = new THREE.PointsMaterial({
           color: 0x0000ff, // Blue color
-          size: 150,
+          size: 100,
           sizeAttenuation: false,
         });
         largePoint = new THREE.Points(pointGeometry, pointMaterial);
