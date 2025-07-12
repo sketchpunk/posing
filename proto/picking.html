@@ -1,0 +1,94 @@
+<!DOCTYPE html><html lang="en"><head><title></title></head>
+<style>canvas{ display:block; } body, html { padding:0px; margin:0px; width:100%; height:100%; }</style>
+<body><script src="../import-map.js"></script><script type="module">
+// #region IMPORTS
+import useThreeWebGL2, { THREE, useDarkScene, useVisualDebug } 
+                                from '@lib/useThreeWebGL2.js';
+
+import facedCube        from "@lib/meshes/facedCube.js";
+import ShapeQuads       from "@lib/meshes/ShapeQuads.js";
+import ShapePointsMesh  from "@lib/meshes/ShapePointsMesh.js";
+// #endregion
+
+// #region MAIN
+let App   = useDarkScene( useThreeWebGL2() );
+let Debug = {};
+let Ref   = {};
+
+window.addEventListener( 'load', async ()=>{
+	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // INIT / SETUP
+	App.sphericalLook( 0, 20, 4, [0,0.8,0] );
+    Debug = await useVisualDebug( App );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const sq = new ShapeQuads();
+    sq.frustumCulled = false;
+    sq.add( [1,1,0], 0x00ffff, 3, 1 );
+    App.scene.add( sq );
+
+    App.scene.add(facedCube([0, 0, 0], 1));
+
+    const pnt = new ShapePointsMesh();
+    pnt.add( [-1,1,0], 0xff00ff, 20, 0 );
+    pnt.frustumCulled      = false;
+    pnt.renderOrder = 1000;
+    pnt.material.depthTest = false;
+    App.scene.add( pnt );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.createRenderLoop( null, null ).start();
+});
+
+
+const wrt = new THREE.WebGLRenderTarget( 1, 1, {
+//   minFilter: THREE.n  THREE.Filter,
+//   magFilter: THREE.LinearFilter,
+    format: THREE.RGBAFormat, //.RGBAFormat,
+    internalFormat: 'RGBA8',
+    type: THREE.UnsignedByteType, // THREE.UnsignedByteType,
+    // encoding: renderer.outputEncoding,
+    // depthBuffer: true,
+});
+
+
+App.renderer.domElement.addEventListener( 'click', onCanvasClick, false);
+
+function onCanvasClick(e) {
+    // Get mouse coordinates relative to the canvas
+    const dpr = window.devicePixelRatio;
+    const mx  = e.clientX * dpr;
+    const my  = e.clientY * dpr;
+
+    const canvas = App.renderer.domElement;
+    App.camera.setViewOffset(
+        canvas.width, // fullWidth
+        canvas.height, // fullHeight
+        Math.floor(mx), // X
+        Math.floor(my), // Y
+        1, // Width
+        1 // Height
+    );
+
+    const pixelBuffer = new Uint8Array(4);
+
+    App.renderer.setRenderTarget(wrt);
+    App.renderer.clear();
+    App.renderer.render( App.scene, App.camera );
+
+    App.camera.clearViewOffset();
+    // App.camera.updateProjectionMatrix();
+
+    // Read the pixel from the render target
+    try {
+        App.renderer.readRenderTargetPixels(wrt, 0, 0, 1, 1, pixelBuffer);
+        console.log(pixelBuffer);
+    } catch (e) {
+        console.error("Error reading render target pixels:", e);
+    } finally {
+        // Restore the original render target (null for the screen)
+        App.renderer.setRenderTarget(null);
+    }
+}
+
+</script></body></html>
