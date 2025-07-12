@@ -5,7 +5,7 @@
 import useThreeWebGL2, { THREE, useDarkScene, useVisualDebug } 
                                 from '@lib/useThreeWebGL2.js';
 import useTransformControl      from '@lib/useTransformControl.js';
-import ShapePointsMesh          from '@lib/meshes/ShapePointsMesh.js';
+import ShapeQuads               from '@lib/meshes/ShapeQuads.js';
 import ScreenPicker, { Tasker } from '@lib/misc/ScreenPicker.js';
 import * as Util                from '@lib/util.js';
 
@@ -24,7 +24,7 @@ let Debug = {};
 let Ref   = {
     gizmo   : useTransformControl( App ).useAxes().hide(),
     picker  : new ScreenPicker( App ),
-    pnt     : new ShapePointsMesh().forDebugging( ),
+    pnt     : new ShapeQuads().forDebugging(),
     tasks   : new Tasker(),
 
     selPnt  : -1,
@@ -197,7 +197,7 @@ function onPicker( o ){
     // console.log( 'Pick', o );
     // if( o.id === -1 || o.type !== "shapePoint" ) return;
     if( o.id === -1 || o.obj !== Ref.pnt ) return;
-    console.log( 'Pick', o );
+    // console.log( 'Pick', o );
     Ref.gizmo.show( o.hit );
     Ref.selPnt = o.idx;
 }
